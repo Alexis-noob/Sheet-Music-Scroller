@@ -1,0 +1,483 @@
+﻿@page "/"
+@using System.Timers
+@inject IJSRuntime JS
+
+<PageTitle>Sheet Music Auto-Scroller</PageTitle>
+
+<div class="app-shell @(showControls ? "" : "hide-ui")">
+
+    <main class="viewer" @onclick="HandleCanvasTap">
+        <div id="scrollContainer" class="scroll-area" style="transform: translateY(-@(currentScrollY)px); transition: transform 0.05s linear;">
+
+            @if (pageImages.Count == 0)
+            {
+                <div class="paper-placeholder" @onclick:stopPropagation>
+                    <div class="placeholder-icon">🎼</div>
+                    <h2>No Sheet Music Loaded</h2>
+                    <p>Load a PDF to extract pages and begin automatic scrolling.</p>
+                    <label class="upload-button">
+                        <InputFile OnChange="LoadPdfPages" accept=".pdf" style="display:none;" />
+                        <span>📂 Select PDF</span>
+                    </label>
+                </div>
+            }
+            else
+            {
+                @foreach (var pageDataUrl in pageImages)
+                {
+                    <div class="music-page-wrapper">
+                        <img src="@pageDataUrl" class="actual-sheet-music-img" alt="Sheet Music Page" />
+                    </div>
+                }
+            }
+
+        </div>
+    </main>
+
+    <footer class="control-dock" @onclick:stopPropagation>
+        <label class="dock-button load" style="cursor: pointer; display: flex;">
+            <InputFile OnChange="LoadPdfPages" accept=".pdf" style="display:none;" />
+            <span class="dock-icon">📂</span>
+            <span>Load</span>
+        </label>
+
+        <button class="dock-button reset" @onclick="ResetScroll" disabled="@(pageImages.Count == 0 || (currentScrollY == 0 && !isScrolling))">
+            <span class="dock-icon">↺</span>
+            <span>Reset</span>
+        </button>
+
+        <button class="dock-button start" @onclick="StartScrolling" disabled="@(isScrolling || pageImages.Count == 0)">
+            <span class="dock-icon">▶</span>
+            <span>Start</span>
+        </button>
+
+        <button class="dock-button pause" @onclick="StopScrolling" disabled="@(!isScrolling)">
+            <span class="dock-icon">⏸</span>
+            <span>Pause</span>
+        </button>
+
+        <div class="tempo-panel">
+            <div class="tempo-header">
+                <div><span class="tempo-title">Tempo</span></div>
+                <div class="tempo-value">@((int)bpm)<small>BPM</small></div>
+            </div>
+            <div class="tempo-slider">
+                <button class="tempo-step" @onclick="() => AdjustBpm(-1)">−</button>
+                <input type="range" min="40" max="200" @bind-value="bpm" @bind-value:event="oninput" class="slider" />
+                <button class="tempo-step" @onclick="() => AdjustBpm(1)">+</button>
+            </div>
+        </div>
+    </footer>
+</div>
+
+@code {
+    private bool isScrolling = false;
+    private bool showControls = true;
+    private double currentScrollY = 0;
+    private double bpm = 120;
+    private List<string> pageImages = new List<string>();
+    private Timer? scrollTimer;
+
+    private const double ScrollMultiplier = 0.55;
+
+    private async Task LoadPdfPages(InputFileChangeEventArgs e)
+    {
+        if (e.File == null) return;
+
+        pageImages.Clear();
+        currentScrollY = 0;
+        showControls = true;
+        StateHasChanged();
+
+        try
+        {
+            using var dotNetStream = e.File.OpenReadStream(1024 * 1024 * 30); // 30MB Max Limit
+            using var streamRef = new DotNetStreamReference(dotNetStream);
+
+            var extractedPages = await JS.InvokeAsync<List<string>>("convertPdfStreamToImages", streamRef);
+            if (extractedPages != null)
+            {
+                pageImages = extractedPages;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"PDF Processing Error: {ex.Message}");
+        }
+
+        StateHasChanged();
+    }
+
+    private void HandleCanvasTap()
+    {
+        if (!showControls) showControls = true;
+    }
+
+    private void AdjustBpm(int amount) => bpm = Math.Clamp(bpm + amount, 40, 200);
+
+    private void StartScrolling()
+    {
+        if (isScrolling || pageImages.Count == 0) return;
+        isScrolling = true;
+        showControls = false;
+
+        scrollTimer = new Timer(50);
+        scrollTimer.Elapsed += OnScrollTick;
+        scrollTimer.AutoReset = true;
+        scrollTimer.Enabled = true;
+    }
+
+    private void OnScrollTick(object? sender, ElapsedEventArgs e)
+    {
+        double pixelsPerSecond = bpm * ScrollMultiplier;
+        double pixelsPerTick = pixelsPerSecond * 0.05;
+        currentScrollY += pixelsPerTick;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void StopScrolling()
+    {
+        isScrolling = false;
+        showControls = true;
+        if (scrollTimer != null) { scrollTimer.Stop(); scrollTimer.Dispose(); }
+    }
+
+    // New structural routing to handle complete sheet rewinds
+    private void ResetScroll()
+    {
+        StopScrolling();
+        currentScrollY = 0;
+        showControls = true;
+        StateHasChanged();
+    }
+}
+
+<style>
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    html, body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        font-family: "Inter","Segoe UI",sans-serif;
+        background: #111315;
+        color: white;
+    }
+
+    body {
+        background: radial-gradient(circle at top right,#222633,#111315 70%);
+    }
+
+    .app-shell {
+        display: flex;
+        flex-direction: column;
+        width: 100vw;
+        height: 100vh;
+    }
+
+    .viewer {
+        flex: 1;
+        overflow: hidden;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 24px 24px 180px 24px;
+        transition: padding 0.3s ease;
+        width: 100%;
+    }
+
+    .scroll-area {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 100%;
+        max-width: 850px;
+        margin: 0 auto;
+    }
+
+    .paper-placeholder {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        gap: 18px;
+        margin-top: 20vh;
+        z-index: 20;
+    }
+
+    .placeholder-icon {
+        font-size: 72px;
+    }
+
+    .paper-placeholder h2 {
+        color: white;
+        font-size: 30px;
+    }
+
+    .paper-placeholder p {
+        color: #9CA3AF;
+        font-size: 16px;
+        max-width: 420px;
+        line-height: 1.7;
+    }
+
+    .upload-button {
+        margin-top: 10px;
+        cursor: pointer;
+        background: #4F46E5;
+        color: white;
+        padding: 16px 34px;
+        border-radius: 14px;
+        font-weight: 600;
+    }
+
+    .music-page-wrapper {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+        background: white;
+        margin-bottom: 24px;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+
+    .actual-sheet-music-img {
+        width: 100%;
+        height: auto;
+        display: block;
+    }
+
+    /* ================= CONTROL DOCK ================= */
+    .control-dock {
+        position: fixed;
+        bottom: 24px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: min(1100px,95vw);
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 20px;
+        border-radius: 24px;
+        background: rgba(23,25,31,.86);
+        backdrop-filter: blur(24px);
+        border: 1px solid rgba(255,255,255,.08);
+        box-shadow: 0 20px 60px rgba(0,0,0,.45);
+        z-index: 100;
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .dock-button {
+        width: 85px;
+        height: 72px;
+        border: none;
+        border-radius: 18px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        color: white;
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 13px;
+        text-decoration: none;
+        text-align: center;
+    }
+
+        .dock-button:active {
+            transform: scale(.96);
+        }
+
+    .dock-icon {
+        font-size: 22px;
+    }
+
+    .load {
+        background: #374151;
+    }
+
+    .reset {
+        background: #4B5563;
+    }
+
+    .start {
+        background: linear-gradient(135deg,#16A34A,#22C55E);
+        box-shadow: 0 0 20px rgba(34,197,94,.30);
+    }
+
+    .pause {
+        background: linear-gradient(135deg,#DC2626,#EF4444);
+    }
+
+    button:disabled {
+        background: #2C2F36 !important;
+        color: #666 !important;
+        box-shadow: none !important;
+        cursor: not-allowed;
+    }
+
+    .tempo-panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 18px 22px;
+        border-radius: 20px;
+        background: rgba(255,255,255,.04);
+        border: 1px solid rgba(255,255,255,.06);
+    }
+
+    .tempo-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .tempo-title {
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        font-size: 12px;
+        color: #9CA3AF;
+        font-weight: 700;
+    }
+
+    .tempo-value {
+        font-size: 42px;
+        font-weight: 800;
+        color: #818CF8;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+    }
+
+        .tempo-value small {
+            font-size: 15px;
+            color: #9CA3AF;
+            margin-left: 6px;
+            font-weight: 600;
+        }
+
+    .tempo-slider {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+    }
+
+    .tempo-step {
+        width: 48px;
+        height: 48px;
+        border-radius: 14px;
+        border: none;
+        background: #2B2F36;
+        color: white;
+        font-size: 24px;
+        cursor: pointer;
+    }
+
+    .slider {
+        flex: 1;
+        appearance: none;
+        -webkit-appearance: none;
+        height: 8px;
+        border-radius: 999px;
+        background: #30343B;
+        outline: none;
+    }
+
+        .slider::-webkit-slider-thumb {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: white;
+            border: 5px solid #6366F1;
+            cursor: pointer;
+            box-shadow: 0 0 18px rgba(99,102,241,.45);
+        }
+
+    .hide-ui .control-dock {
+        transform: translate(-50%, 150px);
+    }
+
+    .hide-ui .viewer {
+        padding: 24px;
+    }
+
+    @("@") media (max-width: 1100px) {
+        .control-dock {
+            width: 95vw;
+            gap: 12px;
+            padding: 16px;
+        }
+    }
+    @("@") media (max-width: 768px) {
+        .viewer {
+            padding: 16px 16px 270px 16px;
+        }
+
+        .hide-ui .viewer {
+            padding: 16px;
+        }
+
+        .control-dock {
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 12px;
+            border-radius: 22px;
+        }
+
+        .dock-button {
+            flex: 1;
+            min-width: 75px;
+            max-width: 110px;
+        }
+
+        .tempo-panel {
+            width: 100%;
+        }
+    }
+    @("@") media (max-width: 500px) {
+        .viewer {
+            padding: 12px 12px 320px 12px;
+        }
+
+        .hide-ui .viewer {
+            padding: 12px;
+        }
+
+        .control-dock {
+            bottom: 24px;
+            padding: 14px;
+            gap: 10px;
+        }
+
+        .hide-ui .control-dock {
+            transform: translate(-50%, 350px);
+        }
+
+        .dock-button {
+            height: 64px;
+            font-size: 12px;
+        }
+
+        .dock-icon {
+            font-size: 20px;
+        }
+
+        .tempo-value {
+            font-size: 34px;
+        }
+
+        .tempo-step {
+            width: 42px;
+            height: 42px;
+        }
+    }
+</style>

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BlazorApp1</title>
+    <base href="/Sheet-Music-Scroller" />
+    <link rel="preload" id="webassembly" />
+    <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link href="BlazorApp1.styles.css" rel="stylesheet" />
+    <script type="importmap"></script>
+</head>
+
+<body>
+    <div id="app">
+        <svg class="loading-progress">
+            <circle r="40%" cx="50%" cy="50%" />
+            <circle r="40%" cx="50%" cy="50%" />
+        </svg>
+        <div class="loading-progress-text"></div>
+    </div>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">🗙</span>
+    </div>
+    <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+        window.convertPdfStreamToImages = async (streamRef) => {
+            // 1. Process byte arrays stream securely out of Blazor directly into JS memory allocation
+            const streamBuffer = await streamRef.arrayBuffer();
+
+            // 2. Load data array pointer directly into Mozilla's processing pipeline
+            const loadingTask = pdfjsLib.getDocument({ data: streamBuffer });
+            const pdf = await loadingTask.promise;
+            const pageImageUrls = [];
+
+            // 3. Loop and render every page onto canvas arrays
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+
+                // Render at high scaling visibility (scale: 2) for crisp rendering on high-DPI displays
+                const viewport = page.getViewport({ scale: 2.0 });
+
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+
+                const renderContext = {
+                    canvasContext: context,
+                    viewport: viewport
+                };
+
+                await page.render(renderContext).promise;
+
+                // Export out clean web-safe compression jpegs
+                pageImageUrls.push(canvas.toDataURL('image/jpeg', 0.85));
+
+                // Memory cleanup
+                canvas.width = 0;
+                canvas.height = 0;
+            }
+
+            return pageImageUrls;
+        };
+    </script>
+</body>
+
+</html>
